@@ -326,9 +326,10 @@ export default function Dashboard() {
 
 function typeLabel(type) {
   return {
-    login: "🔑 登入",
+    login: "🟢 上線",
     deposit: "💰 存款",
     bet: "🎰 投注",
-    idle: "⏸️ 閒置",
+    switch: "🔄 切換遊戲",
+    session_end: "🔴 活動結束",
   }[type] || type;
 }
