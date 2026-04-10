@@ -1,0 +1,300 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  font-family: -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
+  background: #0a0e1a;
+  color: #e4e7eb;
+  min-height: 100vh;
+}
+
+a {
+  color: #4fc3f7;
+  text-decoration: none;
+}
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+input, button, select {
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* ===== 登入頁 ===== */
+.login-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: radial-gradient(ellipse at center, #1a2138 0%, #0a0e1a 100%);
+}
+
+.login-card {
+  background: #141a2a;
+  border: 1px solid #2a3447;
+  border-radius: 12px;
+  padding: 40px;
+  width: 380px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.login-title {
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: #fff;
+  text-align: center;
+}
+
+.login-subtitle {
+  text-align: center;
+  color: #8a92a6;
+  font-size: 13px;
+  margin-bottom: 32px;
+}
+
+.login-input {
+  width: 100%;
+  padding: 12px 14px;
+  background: #0a0e1a;
+  border: 1px solid #2a3447;
+  border-radius: 8px;
+  color: #fff;
+  margin-bottom: 16px;
+  outline: none;
+}
+
+.login-input:focus {
+  border-color: #4fc3f7;
+}
+
+.login-btn {
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, #4fc3f7, #2196f3);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.login-btn:hover {
+  opacity: 0.9;
+}
+
+.login-error {
+  color: #ef5350;
+  font-size: 13px;
+  text-align: center;
+  margin-top: 12px;
+}
+
+/* ===== Dashboard ===== */
+.header {
+  background: #141a2a;
+  border-bottom: 1px solid #2a3447;
+  padding: 16px 0;
+}
+
+.header-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand {
+  font-size: 20px;
+  font-weight: 700;
+  color: #4fc3f7;
+}
+
+.brand-sub {
+  font-size: 12px;
+  color: #8a92a6;
+  margin-left: 8px;
+}
+
+.logout {
+  background: transparent;
+  color: #8a92a6;
+  border: 1px solid #2a3447;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.logout:hover {
+  color: #fff;
+  border-color: #4fc3f7;
+}
+
+.card {
+  background: #141a2a;
+  border: 1px solid #2a3447;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.card-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-title-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.badge {
+  background: #2196f3;
+  color: #fff;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.add-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.input {
+  padding: 10px 12px;
+  background: #0a0e1a;
+  border: 1px solid #2a3447;
+  border-radius: 6px;
+  color: #fff;
+  outline: none;
+}
+
+.input:focus {
+  border-color: #4fc3f7;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #4fc3f7, #2196f3);
+  color: #fff;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.btn-danger {
+  background: transparent;
+  color: #ef5350;
+  border: 1px solid #ef5350;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.btn-danger:hover {
+  background: #ef5350;
+  color: #fff;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: #0a0e1a;
+  color: #8a92a6;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.table td {
+  padding: 12px;
+  border-bottom: 1px solid #2a3447;
+  font-size: 14px;
+}
+
+.table tr:hover td {
+  background: #1a2138;
+}
+
+.empty {
+  text-align: center;
+  padding: 32px;
+  color: #8a92a6;
+  font-size: 13px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+}
+
+.setting-item label {
+  display: block;
+  font-size: 12px;
+  color: #8a92a6;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: #4caf50;
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+}
+
+.toast.error {
+  background: #ef5350;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4caf50;
+  margin-right: 6px;
+  box-shadow: 0 0 8px #4caf50;
+}
+
+.status-dot.off {
+  background: #8a92a6;
+  box-shadow: none;
+}
