@@ -68,7 +68,15 @@ async function processMember(monitor, settings, stats) {
 
   // 平台優先用 Dashboard 設定的，沒設才用 API 回傳的
   const platform = monitor.platform || data.member?.platform || "";
-  const allBets = data.bets || [];
+  let allBets = data.bets || [];
+  if (allBets.length === 0) return;
+
+  // 過濾掉「加入監控之前」的下注
+  // monitor.addedAt 是真 UTC，要轉成「假 UTC」（+8 小時）才能跟 bet_time 字串比較
+  if (monitor.addedAt) {
+    const addedAtFakeUtc = toFakeUtcString(monitor.addedAt);
+    allBets = allBets.filter((b) => b.time >= addedAtFakeUtc);
+  }
   if (allBets.length === 0) return;
 
   // 套用該會員的投注門檻過濾
@@ -152,4 +160,14 @@ async function pushBetNotification(platform, memberId, bet, stats) {
   });
 
   stats.betStarts++;
+}
+
+/**
+ * 把真 UTC ISO 字串轉成「假 UTC」字串（+8 小時），用來跟 API 的 bet_time 字串比較
+ *   2026-04-11T12:00:00.000Z (真 UTC) → 2026-04-11T20:00:00.000Z (假 UTC，代表北京 20:00)
+ */
+function toFakeUtcString(realUtcIso) {
+  const d = new Date(realUtcIso);
+  d.setUTCHours(d.getUTCHours() + 8);
+  return d.toISOString();
 }
