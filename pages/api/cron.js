@@ -4,9 +4,10 @@ import {
   addHistory,
   getSession,
   setSession,
+  clearSession,
 } from "../../lib/store.js";
 import { getMemberBetsToday } from "../../lib/siteApi.js";
-import { sendTelegram, tplBetStart } from "../../lib/telegram.js";
+import { sendTelegram, tplBetStart, tplBetStop } from "../../lib/telegram.js";
 
 /**
  * Cron 端點：由 cron-job.org 每分鐘呼叫一次
@@ -14,15 +15,13 @@ import { sendTelegram, tplBetStart } from "../../lib/telegram.js";
  * 邏輯：
  *   對每個監控對象：
  *   1. 抓「今天」（北京時間）所有下注
- *   2. 沒下注 → 不做事
- *   3. 找出符合該會員「投注門檻」的「合格下注」
- *      - 門檻 = 0 → 任何下注都合格
- *      - 門檻 > 0 → 只有單筆 ≥ 門檻的才合格
- *   4. 沒 session → 推「首次合格下注」+ 建立 session
- *   5. 有 session：
- *      - 看新的合格下注是否跟 session 上次推送相差 ≥ 閒置門檻
- *      - 是 → 視為新一輪，推通知 + 更新 session
- *      - 否 → 持續下注中，更新 lastBetTime 但不推
+ *   2. 過濾掉「加入監控之前」的下注
+ *   3. 套用「投注門檻」過濾出合格下注
+ *
+ *   3 種狀態：
+ *   A. 沒 session 且有合格下注 → 推「下注了！！！！」+ 建立 session
+ *   B. 有 session 且有新合格下注 → 更新 session 的統計
+ *   C. 有 session 且閒置超過 N 分鐘 → 推「停止投注」+ 清除 session
  */
 export default async function handler(req, res) {
   const auth = req.headers.authorization || "";
@@ -30,7 +29,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const stats = { checked: 0, betStarts: 0, errors: [] };
+  const stats = { checked: 0, betStarts: 0, betStops: 0, errors: [] };
 
   try {
     const settings = await getSettings();
@@ -66,18 +65,17 @@ async function processMember(monitor, settings, stats) {
   const data = await getMemberBetsToday(monitor.id);
   if (!data) return;
 
-  // 平台優先用 Dashboard 設定的，沒設才用 API 回傳的
   const platform = monitor.platform || data.member?.platform || "";
+  const idleMinutes = settings.idleMinutes || 30;
+  const idleThresholdMs = idleMinutes * 60 * 1000;
+
   let allBets = data.bets || [];
-  if (allBets.length === 0) return;
 
   // 過濾掉「加入監控之前」的下注
-  // monitor.addedAt 是真 UTC，要轉成「假 UTC」（+8 小時）才能跟 bet_time 字串比較
   if (monitor.addedAt) {
     const addedAtFakeUtc = toFakeUtcString(monitor.addedAt);
     allBets = allBets.filter((b) => b.time >= addedAtFakeUtc);
   }
-  if (allBets.length === 0) return;
 
   // 套用該會員的投注門檻過濾
   const threshold = monitor.betThreshold || 0;
@@ -85,75 +83,68 @@ async function processMember(monitor, settings, stats) {
     ? allBets.filter((b) => b.amount >= threshold)
     : allBets;
 
-  if (qualifiedBets.length === 0) return; // 沒有合格下注
-
-  const idleMinutes = settings.idleMinutes || 30;
-  const idleThresholdMs = idleMinutes * 60 * 1000;
-
-  // 所有下注的「最新時間」（用來追蹤閒置）
-  const latestAllBet = allBets[allBets.length - 1];
-  const firstQualified = qualifiedBets[0];
-
   let session = await getSession(monitor.id);
 
-  // ===== Case 1：第一次監控到此會員（無 session）=====
+  // ===== 先檢查現有 session 是否該觸發「停止投注」=====
+  if (session) {
+    const lastBetMs = parseFakeUtcMs(session.lastBetTime);
+    const nowMs = Date.now();
+    const idleMs = nowMs - lastBetMs;
+
+    // 查 session 之後有沒有新合格下注
+    const hasNewBets = qualifiedBets.some(
+      (b) => b.time > session.lastBetTime
+    );
+
+    if (idleMs >= idleThresholdMs && !hasNewBets) {
+      // 閒置超過門檻 + 沒有新下注 → 推「停止投注」
+      await pushBetStopNotification(platform, monitor.id, session, stats);
+      await clearSession(monitor.id);
+      session = null;
+    }
+  }
+
+  // ===== 接著處理新下注 =====
+  if (qualifiedBets.length === 0) return;
+
   if (!session) {
-    // 取「合格下注」的最新 10 筆
+    // Case A：沒 session → 推「下注了」+ 建立 session
+    const firstQualified = qualifiedBets[0];
     const last10 = qualifiedBets.slice(-10);
-    await pushBetNotification(platform, monitor.id, firstQualified, last10, stats);
+    await pushBetStartNotification(platform, monitor.id, firstQualified, last10, stats);
+
+    // session 統計：本輪所有合格下注
+    const allAmounts = qualifiedBets.map((b) => b.amount);
     await setSession(monitor.id, {
       startTime: firstQualified.time,
-      lastBetTime: latestAllBet.time,
-      lastNotifiedBetTime: firstQualified.time,
+      lastBetTime: qualifiedBets[qualifiedBets.length - 1].time,
+      totalBets: qualifiedBets.length,
+      minAmount: Math.min(...allAmounts),
+      maxAmount: Math.max(...allAmounts),
+      lastGame: qualifiedBets[qualifiedBets.length - 1].game,
     });
     return;
   }
 
-  // ===== Case 2：已有 session =====
-  // 找出「比 session.lastNotifiedBetTime 還新的合格下注」
-  const newQualifiedBets = qualifiedBets.filter(
-    (b) => b.time > session.lastNotifiedBetTime
-  );
+  // Case B：已有 session → 更新統計
+  const newBets = qualifiedBets.filter((b) => b.time > session.lastBetTime);
+  if (newBets.length === 0) return;
 
-  if (newQualifiedBets.length === 0) {
-    // 沒有新合格下注 → 但可能有新「不合格」下注，更新 lastBetTime
-    if (latestAllBet.time > session.lastBetTime) {
-      session.lastBetTime = latestAllBet.time;
-      await setSession(monitor.id, session);
-    }
-    return;
-  }
+  // 累加統計
+  const newAmounts = newBets.map((b) => b.amount);
+  session.totalBets += newBets.length;
+  session.minAmount = Math.min(session.minAmount, ...newAmounts);
+  session.maxAmount = Math.max(session.maxAmount, ...newAmounts);
+  session.lastBetTime = newBets[newBets.length - 1].time;
+  session.lastGame = newBets[newBets.length - 1].game;
 
-  // 有新合格下注 → 計算跟「上次任何下注」的時間差（判斷閒置）
-  const newFirstQualified = newQualifiedBets[0];
-  const lastBetMs = new Date(session.lastBetTime).getTime();
-  const newBetMs = new Date(newFirstQualified.time).getTime();
-  const gapMs = newBetMs - lastBetMs;
-
-  if (gapMs >= idleThresholdMs) {
-    // 中間有閒置 ≥ 30 分鐘 → 視為新一輪 → 推通知
-    // 區間用「新合格下注」的最新 10 筆
-    const last10 = newQualifiedBets.slice(-10);
-    await pushBetNotification(platform, monitor.id, newFirstQualified, last10, stats);
-    session.lastNotifiedBetTime = newFirstQualified.time;
-  }
-
-  // 不論是否推通知，都更新 lastBetTime
-  session.lastBetTime = latestAllBet.time;
   await setSession(monitor.id, session);
 }
 
 /**
- * 發送 Telegram 通知 + 紀錄歷史
- *
- * @param {string} platform
- * @param {string} memberId
- * @param {object} firstBet  - 用來顯示「玩法」和「開始時間」
- * @param {array}  recentBets - 最近 10 筆合格下注，用來計算金額區間
- * @param {object} stats
+ * 發送「下注了」通知
  */
-async function pushBetNotification(platform, memberId, firstBet, recentBets, stats) {
-  // 計算金額區間
+async function pushBetStartNotification(platform, memberId, firstBet, recentBets, stats) {
   const amounts = recentBets.map((b) => b.amount);
   const minAmount = Math.min(...amounts);
   const maxAmount = Math.max(...amounts);
@@ -179,11 +170,54 @@ async function pushBetNotification(platform, memberId, firstBet, recentBets, sta
 }
 
 /**
- * 把真 UTC ISO 字串轉成「假 UTC」字串（+8 小時），用來跟 API 的 bet_time 字串比較
- *   2026-04-11T12:00:00.000Z (真 UTC) → 2026-04-11T20:00:00.000Z (假 UTC，代表北京 20:00)
+ * 發送「停止投注」通知
+ */
+async function pushBetStopNotification(platform, memberId, session, stats) {
+  await sendTelegram(
+    tplBetStop({
+      platform,
+      memberId,
+      game: session.lastGame,
+      totalBets: session.totalBets,
+      minAmount: session.minAmount,
+      maxAmount: session.maxAmount,
+      lastBetTime: formatBetTime(session.lastBetTime),
+    })
+  );
+
+  await addHistory({
+    type: "bet_stop",
+    memberId,
+    detail: `共 ${session.totalBets} 筆 ${session.minAmount}~${session.maxAmount}`,
+  });
+
+  stats.betStops++;
+}
+
+/**
+ * 把真 UTC ISO 字串轉成「假 UTC」字串（+8 小時）
  */
 function toFakeUtcString(realUtcIso) {
   const d = new Date(realUtcIso);
   d.setUTCHours(d.getUTCHours() + 8);
   return d.toISOString();
+}
+
+/**
+ * 把「假 UTC」字串解析成 ms（要扣回 8 小時才是真實時間）
+ *   2026-04-12T19:00:00.000Z (假 UTC) → 北京 19:00 → 真 UTC 11:00
+ */
+function parseFakeUtcMs(fakeUtcStr) {
+  if (!fakeUtcStr) return 0;
+  const ms = new Date(fakeUtcStr).getTime();
+  return ms - 8 * 60 * 60 * 1000;
+}
+
+/**
+ * 把 bet_time 字串格式化成顯示用
+ *   2026-04-12T19:00:00.000Z → 2026-04-12 19:00:00
+ */
+function formatBetTime(s) {
+  if (!s) return "—";
+  return s.replace("T", " ").replace(/\.\d+Z?$/, "").replace(/Z$/, "");
 }
