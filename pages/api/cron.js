@@ -3,32 +3,22 @@ import {
   getSettings,
   getLastCheck,
   setLastCheck,
-  isNotified,
-  markNotified,
   addHistory,
   getSession,
   setSession,
   clearSession,
 } from "../../lib/store.js";
 import { getMemberActivity } from "../../lib/siteApi.js";
-import {
-  sendTelegram,
-  tplLogin,
-  tplDeposit,
-  tplBet,
-  tplGameSwitch,
-  tplSessionEnd,
-} from "../../lib/telegram.js";
+import { sendTelegram, tplBetStart } from "../../lib/telegram.js";
 
 /**
  * Cron 端點：由 cron-job.org 每分鐘呼叫一次
  *
- * 監控邏輯（依 Q1～Q6 需求）：
- *   1. 上線通知       - 會員登入瞬間
- *   2. 存款通知       - 達到門檻
- *   3. 投注通知       - 達到門檻
- *   4. 切換遊戲通知    - A 遊戲切到 B 遊戲
- *   5. 活動結束總結    - 第一次投注後閒置 N 分鐘（預設 30 分）
+ * 邏輯：
+ *   1. 對每個監控對象呼叫平台 API 取得投注紀錄
+ *   2. 若會員無 session（首次下注或閒置已重置）→ 推一則「下注了！！！！」
+ *   3. session 存在 → 不推（持續下注中）
+ *   4. 閒置 N 分鐘以上 → 清除 session（下次再下注會被視為首次）
  */
 export default async function handler(req, res) {
   const auth = req.headers.authorization || "";
@@ -36,15 +26,7 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const stats = {
-    checked: 0,
-    logins: 0,
-    deposits: 0,
-    bets: 0,
-    switches: 0,
-    sessionEnds: 0,
-    errors: [],
-  };
+  const stats = { checked: 0, betStarts: 0, idleResets: 0, errors: [] };
 
   try {
     const settings = await getSettings();
@@ -62,11 +44,12 @@ export default async function handler(req, res) {
       (await getLastCheck()) ||
       new Date(Date.now() - 2 * 60 * 1000).toISOString();
     const now = new Date().toISOString();
+    const platform = settings.platform || "";
 
     for (const monitor of monitors) {
       try {
         stats.checked++;
-        await processMember(monitor, settings, lastCheck, stats);
+        await processMember(monitor, settings, platform, lastCheck, stats);
       } catch (err) {
         stats.errors.push(`${monitor.id}: ${err.message}`);
       }
@@ -82,141 +65,69 @@ export default async function handler(req, res) {
 /**
  * 處理單一監控對象
  */
-async function processMember(monitor, settings, lastCheck, stats) {
+async function processMember(monitor, settings, platform, lastCheck, stats) {
   const data = await getMemberActivity(monitor.id, lastCheck);
   if (!data) return;
 
-  const member = {
-    ...data.member,
-    name: data.member?.name || monitor.name,
-  };
-
-  // ===== 1. 上線通知 =====
-  for (const login of data.logins || []) {
-    const key = `login:${monitor.id}:${login.time}`;
-    if (await isNotified(key)) continue;
-
-    await sendTelegram(
-      tplLogin({ ...member, ip: login.ip, region: login.region })
-    );
-    await markNotified(key, 86400);
-    await addHistory({
-      type: "login",
-      memberId: monitor.id,
-      detail: `登入 IP ${login.ip || "未知"}`,
-    });
-    stats.logins++;
-  }
-
-  // ===== 2. 存款通知（達門檻）=====
-  for (const dep of data.deposits || []) {
-    if (dep.amount < settings.deposit) continue;
-    const key = `deposit:${monitor.id}:${dep.time}`;
-    if (await isNotified(key)) continue;
-
-    await sendTelegram(tplDeposit(member, dep.amount));
-    await markNotified(key, 86400);
-    await addHistory({
-      type: "deposit",
-      memberId: monitor.id,
-      detail: `存款 ${dep.amount.toLocaleString()}`,
-    });
-    stats.deposits++;
-  }
-
-  // ===== 3. 投注通知 + 4. 切換遊戲 + 5. Session 追蹤 =====
-  let session = await getSession(monitor.id);
-
-  // 依時間排序投注
-  const sortedBets = (data.bets || [])
+  const bets = (data.bets || [])
     .slice()
     .sort((a, b) => new Date(a.time) - new Date(b.time));
 
-  for (const bet of sortedBets) {
-    // 3a. 投注達門檻通知
-    if (bet.amount >= settings.bet) {
-      const key = `bet:${monitor.id}:${bet.time}`;
-      if (!(await isNotified(key))) {
-        await sendTelegram(tplBet(member, bet));
-        await markNotified(key, 86400);
-        await addHistory({
-          type: "bet",
-          memberId: monitor.id,
-          detail: `投注 ${bet.amount.toLocaleString()} (${bet.game || "未知"})`,
-        });
-        stats.bets++;
-      }
-    }
+  let session = await getSession(monitor.id);
 
-    // 3b. 切換遊戲偵測
-    if (session && session.lastGame && session.lastGame !== bet.game) {
-      await sendTelegram(tplGameSwitch(member, session.lastGame, bet.game));
-      await addHistory({
-        type: "switch",
-        memberId: monitor.id,
-        detail: `${session.lastGame} → ${bet.game}`,
-      });
-      stats.switches++;
-    }
-
-    // 3c. Session 狀態維護
-    if (!session) {
-      // 第一次投注 → 開啟新 session
-      session = {
-        startTime: bet.time,
-        lastBetTime: bet.time,
-        lastGame: bet.game,
-        mainGame: bet.game,
-        betCount: 1,
-        totalAmount: bet.amount,
-      };
-    } else {
-      session.lastBetTime = bet.time;
-      session.lastGame = bet.game;
-      session.betCount = (session.betCount || 0) + 1;
-      session.totalAmount = (session.totalAmount || 0) + bet.amount;
-    }
-  }
-
-  // ===== 4. Session 結束偵測（閒置 N 分鐘）=====
+  // ===== 1. 閒置重置 =====
   if (session) {
     const idleMs = Date.now() - new Date(session.lastBetTime).getTime();
-    const idleThresholdMs = settings.idleMinutes * 60 * 1000;
+    const thresholdMs = (settings.idleMinutes || 30) * 60 * 1000;
 
-    if (idleMs >= idleThresholdMs) {
-      // Session 結束 → 推送總結
-      await sendTelegram(
-        tplSessionEnd(member, {
-          mainGame: session.mainGame,
-          betCount: session.betCount,
-          // 以下欄位由平台 API 提供（對接時填入）
-          todayProfit: data.todayProfit,
-          todayPromo: data.todayPromo,
-          todayActual: data.todayActual,
-          monthProfit: data.monthProfit,
-          monthPromo: data.monthPromo,
-          monthActual: data.monthActual,
-          totalProfit: data.totalProfit,
-          totalPromo: data.totalPromo,
-          totalActual: data.totalActual,
-          totalBet: data.totalBet,
-          totalDeposit: data.totalDeposit,
-          createdAt: data.createdAt,
-          lastLoginTime: data.lastLoginTime,
-          firstBetTime: session.startTime,
-          lastBetTime: session.lastBetTime,
-        })
-      );
-      await addHistory({
-        type: "session_end",
-        memberId: monitor.id,
-        detail: `活動結束 共 ${session.betCount} 注`,
-      });
+    if (idleMs >= thresholdMs && bets.length === 0) {
+      // 閒置且這次沒新下注 → 清除 session
       await clearSession(monitor.id);
-      stats.sessionEnds++;
-    } else {
-      // Session 進行中 → 儲存狀態
-      await setSession(monitor.id, session);
+      session = null;
+      stats.idleResets++;
     }
   }
+
+  if (bets.length === 0) return;
+
+  // ===== 2. 處理下注 =====
+  if (!session) {
+    // 首次下注 → 推「下注了！！！！」
+    const firstBet = bets[0];
+
+    await sendTelegram(
+      tplBetStart({
+        platform,
+        memberId: monitor.id,
+        game: firstBet.game,
+        amount: firstBet.amount,
+        startTime: formatTime(firstBet.time),
+      })
+    );
+
+    await addHistory({
+      type: "bet_start",
+      memberId: monitor.id,
+      detail: `${firstBet.game || "未知"} ${firstBet.amount}`,
+    });
+
+    // 建立 session
+    session = {
+      startTime: firstBet.time,
+      firstAmount: firstBet.amount,
+      firstGame: firstBet.game,
+      lastBetTime: bets[bets.length - 1].time,
+    };
+    stats.betStarts++;
+  } else {
+    // 已有 session → 只更新最後下注時間
+    session.lastBetTime = bets[bets.length - 1].time;
+  }
+
+  await setSession(monitor.id, session);
+}
+
+function formatTime(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" });
 }

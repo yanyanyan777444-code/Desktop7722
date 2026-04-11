@@ -12,7 +12,7 @@ export default async function handler(req, res) {
 
   if (req.method === "POST") {
     const updates = req.body || {};
-    const allowed = ["deposit", "bet", "idleMinutes", "enabled"];
+    const allowed = ["platform", "idleMinutes", "enabled"];
     const filtered = {};
     for (const key of allowed) {
       if (updates[key] !== undefined) filtered[key] = updates[key];

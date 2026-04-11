@@ -54,7 +54,11 @@ export default function Dashboard() {
     const res = await fetch("/api/monitors", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: newId.trim(), name: newName.trim(), note: newNote.trim() }),
+      body: JSON.stringify({
+        id: newId.trim(),
+        name: newName.trim(),
+        note: newNote.trim(),
+      }),
     });
 
     const data = await res.json();
@@ -169,48 +173,24 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* 門檻設定 */}
+        {/* 設定 */}
         <div className="card">
           <div className="card-title">
-            <div className="card-title-text">⚙️ 門檻設定</div>
+            <div className="card-title-text">⚙️ 設定</div>
           </div>
-          <div className="settings-grid">
-            <div className="setting-item">
-              <label>存款門檻</label>
-              <input
-                className="input"
-                type="number"
-                value={settings?.deposit || 0}
-                onChange={(e) => setSettings({ ...settings, deposit: Number(e.target.value) })}
-                onBlur={() => handleSaveSettings({ deposit: settings.deposit })}
-                style={{ width: "100%" }}
-              />
-            </div>
-            <div className="setting-item">
-              <label>投注門檻</label>
-              <input
-                className="input"
-                type="number"
-                value={settings?.bet || 0}
-                onChange={(e) => setSettings({ ...settings, bet: Number(e.target.value) })}
-                onBlur={() => handleSaveSettings({ bet: settings.bet })}
-                style={{ width: "100%" }}
-              />
-            </div>
-            <div className="setting-item">
-              <label>閒置分鐘數</label>
-              <input
-                className="input"
-                type="number"
-                value={settings?.idleMinutes || 0}
-                onChange={(e) => setSettings({ ...settings, idleMinutes: Number(e.target.value) })}
-                onBlur={() => handleSaveSettings({ idleMinutes: settings.idleMinutes })}
-                style={{ width: "100%" }}
-              />
-            </div>
+          <div className="setting-item" style={{ maxWidth: "300px" }}>
+            <label>閒置分鐘數（超過視為停止下注）</label>
+            <input
+              className="input"
+              type="number"
+              value={settings?.idleMinutes || 0}
+              onChange={(e) => setSettings({ ...settings, idleMinutes: Number(e.target.value) })}
+              onBlur={() => handleSaveSettings({ idleMinutes: settings.idleMinutes })}
+              style={{ width: "100%" }}
+            />
           </div>
           <div style={{ marginTop: "12px", fontSize: "12px", color: "#8a92a6" }}>
-            💡 修改數值後點擊其他位置會自動儲存。投注/存款達到門檻會立即推播 Telegram。
+            💡 會員第一次下注時推送通知。閒置超過設定分鐘數後，下次下注會視為新一輪通知。
           </div>
         </div>
 
@@ -219,6 +199,24 @@ export default function Dashboard() {
           <div className="card-title">
             <div className="card-title-text">👁️ 監控對象清單</div>
             <span className="badge">{monitors.length}</span>
+          </div>
+
+          {/* 全域平台選擇 */}
+          <div style={{ marginBottom: "16px", padding: "12px 16px", background: "#0a0e1a", border: "1px solid #2a3447", borderRadius: "8px", display: "flex", alignItems: "center", gap: "12px" }}>
+            <label style={{ color: "#8a92a6", fontSize: "13px", whiteSpace: "nowrap" }}>
+              🎯 監控平台：
+            </label>
+            <input
+              className="input"
+              placeholder="輸入平台名稱（例如：BBIN、AG、PT）"
+              value={settings?.platform || ""}
+              onChange={(e) => setSettings({ ...settings, platform: e.target.value })}
+              onBlur={() => handleSaveSettings({ platform: settings.platform })}
+              style={{ flex: 1 }}
+            />
+            <span style={{ fontSize: "12px", color: "#8a92a6", whiteSpace: "nowrap" }}>
+              （所有監控對象套用此平台）
+            </span>
           </div>
 
           <form className="add-form" onSubmit={handleAddMonitor}>
@@ -326,10 +324,6 @@ export default function Dashboard() {
 
 function typeLabel(type) {
   return {
-    login: "🟢 上線",
-    deposit: "💰 存款",
-    bet: "🎰 投注",
-    switch: "🔄 切換遊戲",
-    session_end: "🔴 活動結束",
+    bet_start: "🎰 開始下注",
   }[type] || type;
 }
