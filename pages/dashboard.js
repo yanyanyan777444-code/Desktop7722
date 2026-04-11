@@ -11,6 +11,7 @@ export default function Dashboard() {
   const [toast, setToast] = useState(null);
 
   // 新增監控對象表單
+  const [newPlatform, setNewPlatform] = useState("");
   const [newId, setNewId] = useState("");
   const [newName, setNewName] = useState("");
   const [newNote, setNewNote] = useState("");
@@ -57,6 +58,7 @@ export default function Dashboard() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: newId.trim(),
+        platform: newPlatform.trim(),
         name: newName.trim(),
         note: newNote.trim(),
         betThreshold: Number(newThreshold) || 0,
@@ -66,6 +68,7 @@ export default function Dashboard() {
     const data = await res.json();
     if (res.ok) {
       setMonitors(data.monitors);
+      setNewPlatform("");
       setNewId("");
       setNewName("");
       setNewNote("");
@@ -220,25 +223,13 @@ export default function Dashboard() {
             <span className="badge">{monitors.length}</span>
           </div>
 
-          {/* 全域平台選擇 */}
-          <div style={{ marginBottom: "16px", padding: "12px 16px", background: "#0a0e1a", border: "1px solid #2a3447", borderRadius: "8px", display: "flex", alignItems: "center", gap: "12px" }}>
-            <label style={{ color: "#8a92a6", fontSize: "13px", whiteSpace: "nowrap" }}>
-              🎯 監控平台：
-            </label>
+          <form className="add-form" onSubmit={handleAddMonitor}>
             <input
               className="input"
-              placeholder="輸入平台名稱（例如：BBIN、AG、PT）"
-              value={settings?.platform || ""}
-              onChange={(e) => setSettings({ ...settings, platform: e.target.value })}
-              onBlur={() => handleSaveSettings({ platform: settings.platform })}
-              style={{ flex: 1 }}
+              placeholder="平台（例如 BBIN）"
+              value={newPlatform}
+              onChange={(e) => setNewPlatform(e.target.value)}
             />
-            <span style={{ fontSize: "12px", color: "#8a92a6", whiteSpace: "nowrap" }}>
-              （所有監控對象套用此平台）
-            </span>
-          </div>
-
-          <form className="add-form" onSubmit={handleAddMonitor}>
             <input
               className="input"
               placeholder="會員 ID（必填）"
@@ -255,7 +246,7 @@ export default function Dashboard() {
             <input
               className="input"
               type="number"
-              placeholder="投注門檻（留空=任何下注都通知）"
+              placeholder="投注門檻"
               value={newThreshold}
               onChange={(e) => setNewThreshold(e.target.value)}
             />
@@ -276,6 +267,7 @@ export default function Dashboard() {
             <table className="table">
               <thead>
                 <tr>
+                  <th>平台</th>
                   <th>會員 ID</th>
                   <th>名稱</th>
                   <th>投注門檻</th>
@@ -287,6 +279,7 @@ export default function Dashboard() {
               <tbody>
                 {monitors.map((m) => (
                   <tr key={m.id}>
+                    <td><b>{m.platform || "—"}</b></td>
                     <td><code>{m.id}</code></td>
                     <td>{m.name || "—"}</td>
                     <td>

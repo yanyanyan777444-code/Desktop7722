@@ -12,10 +12,10 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "POST") {
-      const { id, name, note, betThreshold } = req.body || {};
+      const { id, name, platform, note, betThreshold } = req.body || {};
       if (!id) return res.status(400).json({ error: "會員 ID 為必填" });
 
-      const monitors = await addMonitor({ id, name, note, betThreshold });
+      const monitors = await addMonitor({ id, name, platform, note, betThreshold });
       return res.status(200).json({ monitors });
     }
 

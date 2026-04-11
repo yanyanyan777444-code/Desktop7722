@@ -66,7 +66,8 @@ async function processMember(monitor, settings, stats) {
   const data = await getMemberBetsToday(monitor.id);
   if (!data) return;
 
-  const platform = data.member?.platform || "";
+  // 平台優先用 Dashboard 設定的，沒設才用 API 回傳的
+  const platform = monitor.platform || data.member?.platform || "";
   const allBets = data.bets || [];
   if (allBets.length === 0) return;
 
