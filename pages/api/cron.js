@@ -1,24 +1,26 @@
 import {
   getMonitors,
   getSettings,
-  getLastCheck,
-  setLastCheck,
   addHistory,
   getSession,
   setSession,
   clearSession,
 } from "../../lib/store.js";
-import { getMemberActivity } from "../../lib/siteApi.js";
+import { getMemberBetsToday } from "../../lib/siteApi.js";
 import { sendTelegram, tplBetStart } from "../../lib/telegram.js";
 
 /**
  * Cron 端點：由 cron-job.org 每分鐘呼叫一次
  *
  * 邏輯：
- *   1. 對每個監控對象呼叫平台 API 取得投注紀錄
- *   2. 若會員無 session（首次下注或閒置已重置）→ 推一則「下注了！！！！」
- *   3. session 存在 → 不推（持續下注中）
- *   4. 閒置 N 分鐘以上 → 清除 session（下次再下注會被視為首次）
+ *   對每個監控對象：
+ *   1. 抓「今天」（北京時間）所有下注
+ *   2. 沒有 session：
+ *      - 如果今天有下注 → 推「下注了！！！！」+ 建立 session
+ *      - 沒下注 → 不做事
+ *   3. 有 session：
+ *      - 比較最新下注時間，如果有比 session 還新的下注 → 更新 session
+ *      - 如果閒置超過 N 分鐘（沒新下注）→ 清除 session
  */
 export default async function handler(req, res) {
   const auth = req.headers.authorization || "";
@@ -40,20 +42,15 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, message: "沒有監控對象", stats });
     }
 
-    const lastCheck =
-      (await getLastCheck()) ||
-      new Date(Date.now() - 2 * 60 * 1000).toISOString();
-    const now = new Date().toISOString();
     for (const monitor of monitors) {
       try {
         stats.checked++;
-        await processMember(monitor, settings, lastCheck, stats);
+        await processMember(monitor, settings, stats);
       } catch (err) {
         stats.errors.push(`${monitor.id}: ${err.message}`);
       }
     }
 
-    await setLastCheck(now);
     return res.status(200).json({ ok: true, stats });
   } catch (err) {
     return res.status(500).json({ error: err.message, stats });
@@ -63,37 +60,19 @@ export default async function handler(req, res) {
 /**
  * 處理單一監控對象
  */
-async function processMember(monitor, settings, lastCheck, stats) {
-  const data = await getMemberActivity(monitor.id, lastCheck);
+async function processMember(monitor, settings, stats) {
+  const data = await getMemberBetsToday(monitor.id);
   if (!data) return;
 
-  // 平台從 API 回傳的 record 自動帶入
   const platform = data.member?.platform || "";
-
-  const bets = (data.bets || [])
-    .slice()
-    .sort((a, b) => new Date(a.time) - new Date(b.time));
-
+  const bets = data.bets || [];
   let session = await getSession(monitor.id);
 
-  // ===== 1. 閒置重置 =====
-  if (session) {
-    const idleMs = Date.now() - new Date(session.lastBetTime).getTime();
-    const thresholdMs = (settings.idleMinutes || 30) * 60 * 1000;
-
-    if (idleMs >= thresholdMs && bets.length === 0) {
-      // 閒置且這次沒新下注 → 清除 session
-      await clearSession(monitor.id);
-      session = null;
-      stats.idleResets++;
-    }
-  }
-
-  if (bets.length === 0) return;
-
-  // ===== 2. 處理下注 =====
+  // ===== Case 1：沒有 session =====
   if (!session) {
-    // 首次下注 → 推「下注了！！！！」
+    if (bets.length === 0) return; // 沒下注 → 不做事
+
+    // 有下注 → 推首筆通知並建立 session
     const firstBet = bets[0];
 
     await sendTelegram(
@@ -102,28 +81,57 @@ async function processMember(monitor, settings, lastCheck, stats) {
         memberId: monitor.id,
         game: firstBet.game,
         amount: firstBet.amount,
-        startTime: firstBet.displayTime || firstBet.time,
+        startTime: firstBet.displayTime,
       })
     );
 
     await addHistory({
       type: "bet_start",
       memberId: monitor.id,
-      detail: `${firstBet.game || "未知"} ${firstBet.amount}`,
+      detail: `${firstBet.game} ${firstBet.amount}`,
     });
 
-    // 建立 session
-    session = {
+    await setSession(monitor.id, {
       startTime: firstBet.time,
-      firstAmount: firstBet.amount,
-      firstGame: firstBet.game,
       lastBetTime: bets[bets.length - 1].time,
-    };
+    });
+
     stats.betStarts++;
-  } else {
-    // 已有 session → 只更新最後下注時間
-    session.lastBetTime = bets[bets.length - 1].time;
+    return;
   }
 
-  await setSession(monitor.id, session);
+  // ===== Case 2：有 session =====
+  const latestBetTime = bets.length > 0 ? bets[bets.length - 1].time : null;
+
+  // 如果有比 session 更新的下注 → 更新 session
+  if (latestBetTime && latestBetTime > session.lastBetTime) {
+    session.lastBetTime = latestBetTime;
+    await setSession(monitor.id, session);
+    return;
+  }
+
+  // 沒有新下注 → 檢查是否該閒置重置
+  // 用最後下注時間 + 閒置時間 vs 現在
+  const idleMinutes = settings.idleMinutes || 30;
+  const lastBetMs = parseApiTime(session.lastBetTime);
+  const nowMs = Date.now();
+  // API 時間是「假 UTC」（北京時間貼 Z 後綴），所以實際 UTC = 字串時間 - 8 小時
+  const realLastBetMs = lastBetMs - 8 * 60 * 60 * 1000;
+  const idleMs = nowMs - realLastBetMs;
+  const thresholdMs = idleMinutes * 60 * 1000;
+
+  if (idleMs >= thresholdMs) {
+    await clearSession(monitor.id);
+    stats.idleResets++;
+  }
+}
+
+/**
+ * 把 API 的 bet_time 字串解析成 milliseconds
+ * 注意：API 字串是「假 UTC」，但這裡我們先當真 UTC 處理，
+ * 之後在比較時再把它當北京時間調整。
+ */
+function parseApiTime(s) {
+  if (!s) return 0;
+  return new Date(s).getTime();
 }
