@@ -102,7 +102,7 @@ async function processMember(monitor, settings, lastCheck, stats) {
         memberId: monitor.id,
         game: firstBet.game,
         amount: firstBet.amount,
-        startTime: formatTime(firstBet.time),
+        startTime: firstBet.displayTime || firstBet.time,
       })
     );
 
@@ -126,9 +126,4 @@ async function processMember(monitor, settings, lastCheck, stats) {
   }
 
   await setSession(monitor.id, session);
-}
-
-function formatTime(iso) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" });
 }
