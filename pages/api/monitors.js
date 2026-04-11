@@ -1,5 +1,5 @@
 import { getAuthFromRequest } from "../../lib/auth.js";
-import { getMonitors, addMonitor, removeMonitor } from "../../lib/store.js";
+import { getMonitors, addMonitor, updateMonitor, removeMonitor } from "../../lib/store.js";
 
 export default async function handler(req, res) {
   const auth = await getAuthFromRequest(req);
@@ -12,10 +12,18 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "POST") {
-      const { id, name, note } = req.body || {};
+      const { id, name, note, betThreshold } = req.body || {};
       if (!id) return res.status(400).json({ error: "會員 ID 為必填" });
 
-      const monitors = await addMonitor({ id, name, note });
+      const monitors = await addMonitor({ id, name, note, betThreshold });
+      return res.status(200).json({ monitors });
+    }
+
+    if (req.method === "PATCH") {
+      const { id, ...updates } = req.body || {};
+      if (!id) return res.status(400).json({ error: "會員 ID 為必填" });
+
+      const monitors = await updateMonitor(id, updates);
       return res.status(200).json({ monitors });
     }
 

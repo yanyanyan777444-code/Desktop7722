@@ -15,13 +15,14 @@ import { sendTelegram, tplBetStart } from "../../lib/telegram.js";
  *   對每個監控對象：
  *   1. 抓「今天」（北京時間）所有下注
  *   2. 沒下注 → 不做事
- *   3. 沒 session → 推「首次下注」+ 建立 session
- *   4. 有 session：
- *      - 取最新下注時間
- *      - 如果跟 session 最後下注時間「相差 ≥ 閒置門檻」→ 視為新一輪，推通知並更新 session
- *      - 否則更新 session.lastBetTime，不推通知（持續下注中）
- *
- *   ⚠️ Session 不自動清除，避免重複推送
+ *   3. 找出符合該會員「投注門檻」的「合格下注」
+ *      - 門檻 = 0 → 任何下注都合格
+ *      - 門檻 > 0 → 只有單筆 ≥ 門檻的才合格
+ *   4. 沒 session → 推「首次合格下注」+ 建立 session
+ *   5. 有 session：
+ *      - 看新的合格下注是否跟 session 上次推送相差 ≥ 閒置門檻
+ *      - 是 → 視為新一輪，推通知 + 更新 session
+ *      - 否 → 持續下注中，更新 lastBetTime 但不推
  */
 export default async function handler(req, res) {
   const auth = req.headers.authorization || "";
@@ -66,55 +67,66 @@ async function processMember(monitor, settings, stats) {
   if (!data) return;
 
   const platform = data.member?.platform || "";
-  const bets = data.bets || [];
-  if (bets.length === 0) return; // 今天沒下注 → 不做事
+  const allBets = data.bets || [];
+  if (allBets.length === 0) return;
+
+  // 套用該會員的投注門檻過濾
+  const threshold = monitor.betThreshold || 0;
+  const qualifiedBets = threshold > 0
+    ? allBets.filter((b) => b.amount >= threshold)
+    : allBets;
+
+  if (qualifiedBets.length === 0) return; // 沒有合格下注
 
   const idleMinutes = settings.idleMinutes || 30;
   const idleThresholdMs = idleMinutes * 60 * 1000;
 
-  // 取今天的第一筆下注（最早）和最後一筆（最新）
-  const firstBet = bets[0];
-  const lastBet = bets[bets.length - 1];
+  // 所有下注的「最新時間」（用來追蹤閒置）
+  const latestAllBet = allBets[allBets.length - 1];
+  const firstQualified = qualifiedBets[0];
 
   let session = await getSession(monitor.id);
 
-  // ===== Case 1：第一次監控到此會員 =====
+  // ===== Case 1：第一次監控到此會員（無 session）=====
   if (!session) {
-    await pushBetNotification(platform, monitor.id, firstBet, stats);
+    await pushBetNotification(platform, monitor.id, firstQualified, stats);
     await setSession(monitor.id, {
-      startTime: firstBet.time,
-      lastBetTime: lastBet.time,
-      lastNotifiedBetTime: firstBet.time,
+      startTime: firstQualified.time,
+      lastBetTime: latestAllBet.time, // 用「全部」下注的最新時間追蹤閒置
+      lastNotifiedBetTime: firstQualified.time,
     });
     return;
   }
 
   // ===== Case 2：已有 session =====
-  // 找出「比 session.lastBetTime 還新的下注」
-  const newBets = bets.filter((b) => b.time > session.lastBetTime);
+  // 找出「比 session.lastNotifiedBetTime 還新的合格下注」
+  const newQualifiedBets = qualifiedBets.filter(
+    (b) => b.time > session.lastNotifiedBetTime
+  );
 
-  if (newBets.length === 0) {
-    // 沒有新下注 → 不動 session（保持原樣）
+  if (newQualifiedBets.length === 0) {
+    // 沒有新合格下注 → 但可能有新「不合格」下注，更新 lastBetTime
+    if (latestAllBet.time > session.lastBetTime) {
+      session.lastBetTime = latestAllBet.time;
+      await setSession(monitor.id, session);
+    }
     return;
   }
 
-  // 有新下注 → 檢查跟上次下注的時間差
-  const newFirstBet = newBets[0];
-  const newLastBet = newBets[newBets.length - 1];
-
-  // 計算「上次下注」到「新下注」的時間差
+  // 有新合格下注 → 計算跟「上次任何下注」的時間差（判斷閒置）
+  const newFirstQualified = newQualifiedBets[0];
   const lastBetMs = new Date(session.lastBetTime).getTime();
-  const newBetMs = new Date(newFirstBet.time).getTime();
+  const newBetMs = new Date(newFirstQualified.time).getTime();
   const gapMs = newBetMs - lastBetMs;
 
   if (gapMs >= idleThresholdMs) {
-    // 中間有閒置 ≥ N 分鐘 → 視為新一輪 → 推通知
-    await pushBetNotification(platform, monitor.id, newFirstBet, stats);
-    session.lastNotifiedBetTime = newFirstBet.time;
+    // 中間有閒置 ≥ 30 分鐘 → 視為新一輪 → 推通知
+    await pushBetNotification(platform, monitor.id, newFirstQualified, stats);
+    session.lastNotifiedBetTime = newFirstQualified.time;
   }
 
   // 不論是否推通知，都更新 lastBetTime
-  session.lastBetTime = newLastBet.time;
+  session.lastBetTime = latestAllBet.time;
   await setSession(monitor.id, session);
 }
 

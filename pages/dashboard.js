@@ -14,6 +14,7 @@ export default function Dashboard() {
   const [newId, setNewId] = useState("");
   const [newName, setNewName] = useState("");
   const [newNote, setNewNote] = useState("");
+  const [newThreshold, setNewThreshold] = useState("");
 
   function showToast(message, type = "success") {
     setToast({ message, type });
@@ -58,6 +59,7 @@ export default function Dashboard() {
         id: newId.trim(),
         name: newName.trim(),
         note: newNote.trim(),
+        betThreshold: Number(newThreshold) || 0,
       }),
     });
 
@@ -67,9 +69,26 @@ export default function Dashboard() {
       setNewId("");
       setNewName("");
       setNewNote("");
+      setNewThreshold("");
       showToast("已加入監控清單");
     } else {
       showToast(data.error || "新增失敗", "error");
+    }
+  }
+
+  async function handleUpdateThreshold(id, value) {
+    const res = await fetch("/api/monitors", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, betThreshold: Number(value) || 0 }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      setMonitors(data.monitors);
+      showToast("門檻已更新");
+    } else {
+      showToast(data.error || "更新失敗", "error");
     }
   }
 
@@ -235,6 +254,13 @@ export default function Dashboard() {
             />
             <input
               className="input"
+              type="number"
+              placeholder="投注門檻（留空=任何下注都通知）"
+              value={newThreshold}
+              onChange={(e) => setNewThreshold(e.target.value)}
+            />
+            <input
+              className="input"
               placeholder="備註"
               value={newNote}
               onChange={(e) => setNewNote(e.target.value)}
@@ -252,6 +278,7 @@ export default function Dashboard() {
                 <tr>
                   <th>會員 ID</th>
                   <th>名稱</th>
+                  <th>投注門檻</th>
                   <th>備註</th>
                   <th>加入時間</th>
                   <th></th>
@@ -262,6 +289,21 @@ export default function Dashboard() {
                   <tr key={m.id}>
                     <td><code>{m.id}</code></td>
                     <td>{m.name || "—"}</td>
+                    <td>
+                      <input
+                        className="input"
+                        type="number"
+                        defaultValue={m.betThreshold || ""}
+                        placeholder="留空=任何下注"
+                        onBlur={(e) => {
+                          const newVal = Number(e.target.value) || 0;
+                          if (newVal !== (m.betThreshold || 0)) {
+                            handleUpdateThreshold(m.id, newVal);
+                          }
+                        }}
+                        style={{ width: "140px", padding: "6px 10px" }}
+                      />
+                    </td>
                     <td>{m.note || "—"}</td>
                     <td style={{ color: "#8a92a6", fontSize: "12px" }}>
                       {new Date(m.addedAt).toLocaleString("zh-TW")}
