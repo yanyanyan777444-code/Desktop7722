@@ -98,10 +98,12 @@ async function processMember(monitor, settings, stats) {
 
   // ===== Case 1：第一次監控到此會員（無 session）=====
   if (!session) {
-    await pushBetNotification(platform, monitor.id, firstQualified, stats);
+    // 取「合格下注」的最新 10 筆
+    const last10 = qualifiedBets.slice(-10);
+    await pushBetNotification(platform, monitor.id, firstQualified, last10, stats);
     await setSession(monitor.id, {
       startTime: firstQualified.time,
-      lastBetTime: latestAllBet.time, // 用「全部」下注的最新時間追蹤閒置
+      lastBetTime: latestAllBet.time,
       lastNotifiedBetTime: firstQualified.time,
     });
     return;
@@ -130,7 +132,9 @@ async function processMember(monitor, settings, stats) {
 
   if (gapMs >= idleThresholdMs) {
     // 中間有閒置 ≥ 30 分鐘 → 視為新一輪 → 推通知
-    await pushBetNotification(platform, monitor.id, newFirstQualified, stats);
+    // 區間用「新合格下注」的最新 10 筆
+    const last10 = newQualifiedBets.slice(-10);
+    await pushBetNotification(platform, monitor.id, newFirstQualified, last10, stats);
     session.lastNotifiedBetTime = newFirstQualified.time;
   }
 
@@ -141,22 +145,34 @@ async function processMember(monitor, settings, stats) {
 
 /**
  * 發送 Telegram 通知 + 紀錄歷史
+ *
+ * @param {string} platform
+ * @param {string} memberId
+ * @param {object} firstBet  - 用來顯示「玩法」和「開始時間」
+ * @param {array}  recentBets - 最近 10 筆合格下注，用來計算金額區間
+ * @param {object} stats
  */
-async function pushBetNotification(platform, memberId, bet, stats) {
+async function pushBetNotification(platform, memberId, firstBet, recentBets, stats) {
+  // 計算金額區間
+  const amounts = recentBets.map((b) => b.amount);
+  const minAmount = Math.min(...amounts);
+  const maxAmount = Math.max(...amounts);
+
   await sendTelegram(
     tplBetStart({
       platform,
       memberId,
-      game: bet.game,
-      amount: bet.amount,
-      startTime: bet.displayTime,
+      game: firstBet.game,
+      minAmount,
+      maxAmount,
+      startTime: firstBet.displayTime,
     })
   );
 
   await addHistory({
     type: "bet_start",
     memberId,
-    detail: `${bet.game} ${bet.amount}`,
+    detail: `${firstBet.game} ${minAmount === maxAmount ? minAmount : `${minAmount}~${maxAmount}`}`,
   });
 
   stats.betStarts++;
