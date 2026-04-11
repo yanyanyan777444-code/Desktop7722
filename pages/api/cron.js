@@ -44,12 +44,10 @@ export default async function handler(req, res) {
       (await getLastCheck()) ||
       new Date(Date.now() - 2 * 60 * 1000).toISOString();
     const now = new Date().toISOString();
-    const platform = settings.platform || "";
-
     for (const monitor of monitors) {
       try {
         stats.checked++;
-        await processMember(monitor, settings, platform, lastCheck, stats);
+        await processMember(monitor, settings, lastCheck, stats);
       } catch (err) {
         stats.errors.push(`${monitor.id}: ${err.message}`);
       }
@@ -65,9 +63,12 @@ export default async function handler(req, res) {
 /**
  * 處理單一監控對象
  */
-async function processMember(monitor, settings, platform, lastCheck, stats) {
+async function processMember(monitor, settings, lastCheck, stats) {
   const data = await getMemberActivity(monitor.id, lastCheck);
   if (!data) return;
+
+  // 平台從 API 回傳的 record 自動帶入
+  const platform = data.member?.platform || "";
 
   const bets = (data.bets || [])
     .slice()
